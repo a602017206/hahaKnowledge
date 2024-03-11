@@ -1,0 +1,1 @@
+const e=JSON.parse('{"key":"v-8c6825c0","path":"/blogs/DataBase/2022/mysql-type.html","title":"","lang":"en-US","frontmatter":{},"headers":[],"git":{"createdTime":1689931689000,"updatedTime":1689931689000,"contributors":[{"name":"ding","email":"602017206@qq.com","commits":1}]},"filePathRelative":"blogs/DataBase/2022/mysql-type.md"}');export{e as data};

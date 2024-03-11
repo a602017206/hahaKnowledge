@@ -1,0 +1,1 @@
+import{_ as t,o as e,c as o,a as c}from"./app-CutjyUmw.js";const s={},n=c("p",null,"默认优于配置，简单的部署，底层集成tomcat/jetty，可以不依赖其它的应用服务器完成部署",-1),_=[n];function r(a,l){return e(),o("div",null,_)}const d=t(s,[["render",r],["__file","springboot.html.vue"]]);export{d as default};

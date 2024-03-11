@@ -1,0 +1,4 @@
+import{_ as e,o as a,c as s,e as n}from"./app-CutjyUmw.js";const t={},i=n(`<h3 id="mybatis写法" tabindex="-1"><a class="header-anchor" href="#mybatis写法" aria-hidden="true">#</a> mybatis写法</h3><div class="language-sql line-numbers-mode" data-ext="sql"><pre class="language-sql"><code><span class="token comment">#{ } 解析为一个 JDBC 预编译语句（prepared statement）的参数标记符占位符 ？</span>
+
+\${ } 仅仅为一个纯碎的 string 替换，在mybatis的动态 <span class="token keyword">SQL</span> 解析阶段将会进行变量替换，可能存在<span class="token keyword">sql</span>注入
+</code></pre><div class="line-numbers" aria-hidden="true"><div class="line-number"></div><div class="line-number"></div><div class="line-number"></div></div></div><h3 id="mybatis-一-二-级缓存" tabindex="-1"><a class="header-anchor" href="#mybatis-一-二-级缓存" aria-hidden="true">#</a> mybatis 一 二 级缓存</h3>`,3),d=[i];function r(c,l){return a(),s("div",null,d)}const m=e(t,[["render",r],["__file","Mybatis.html.vue"]]);export{m as default};
