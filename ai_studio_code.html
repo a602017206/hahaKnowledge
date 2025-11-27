@@ -2,35 +2,86 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>3D 深度交互粒子系统</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
         
-        /* 摄像头预览 */
-        #video-input { position: absolute; bottom: 10px; right: 10px; width: 160px; height: 120px; border-radius: 8px; z-index: 2; transform: scaleX(-1); opacity: 0.7; border: 1px solid #444; }
+        /* 摄像头预览 - 稍微调小一点以免遮挡太多 */
+        #video-input { position: absolute; bottom: 10px; right: 10px; width: 120px; height: 90px; border-radius: 8px; z-index: 2; transform: scaleX(-1); opacity: 0.6; border: 1px solid #444; pointer-events: none; }
         
-        /* UI */
-        #ui-container { position: absolute; top: 20px; left: 20px; z-index: 10; pointer-events: none; }
-        .control-panel { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(10px); padding: 15px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); pointer-events: auto; width: 280px; color: white; }
+        /* UI 容器 */
+        #ui-container { position: absolute; top: 15px; left: 15px; z-index: 10; pointer-events: none; width: 280px; max-width: 80vw; }
         
-        h2 { margin: 0 0 15px 0; font-size: 16px; font-weight: 600; letter-spacing: 1px; color: #00d2ff; }
-        .btn-group { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
-        button { background: #333; border: 1px solid #555; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 12px; }
-        button:hover, button.active { background: #00d2ff; border-color: #00d2ff; color: black; }
+        /* 控制面板主体 */
+        .control-panel { 
+            background: rgba(0, 0, 0, 0.75); 
+            backdrop-filter: blur(12px); 
+            border-radius: 12px; 
+            border: 1px solid rgba(255, 255, 255, 0.15); 
+            pointer-events: auto; 
+            color: white; 
+            overflow: hidden; /* 关键：用于折叠隐藏 */
+            transition: background 0.3s;
+        }
+
+        /* 标题栏 (可点击) */
+        .panel-header {
+            padding: 12px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            background: rgba(255,255,255,0.05);
+            border-bottom: 1px solid transparent;
+            transition: background 0.2s;
+        }
+        .panel-header:active { background: rgba(255,255,255,0.1); }
+        
+        h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 1px; color: #00d2ff; display: flex; align-items: center; gap: 8px; }
+        
+        /* 折叠图标 */
+        .toggle-icon { transition: transform 0.3s ease; font-size: 12px; color: #aaa; }
+        
+        /* 内容区域容器 */
+        .panel-content {
+            max-height: 500px; /* 设置一个足够大的高度用于动画 */
+            opacity: 1;
+            padding: 15px;
+            padding-top: 5px; /* 调整顶部间距 */
+            transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s, padding 0.3s;
+        }
+
+        /* 折叠状态样式 */
+        .control-panel.collapsed .panel-header { border-bottom: none; }
+        .control-panel.collapsed .toggle-icon { transform: rotate(-90deg); }
+        .control-panel.collapsed .panel-content {
+            max-height: 0;
+            opacity: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            pointer-events: none;
+        }
+
+        /* 内部组件样式 */
+        .btn-group { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+        button { background: #333; border: 1px solid #555; color: white; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 11px; flex: 1; }
+        button:hover, button.active { background: #00d2ff; border-color: #00d2ff; color: black; font-weight: bold; }
         
         .upload-btn-wrapper { position: relative; overflow: hidden; display: inline-block; width: 100%; margin-top: 5px; }
         .upload-btn-wrapper input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
         .custom-file-btn { width: 100%; background: #444; text-align: center; }
 
-        #fullscreen-btn { position: absolute; top: 20px; right: 20px; z-index: 10; background: rgba(255,255,255,0.1); border: none; padding: 10px; border-radius: 50%; cursor: pointer; fill: white; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; transition: 0.3s; }
-        #fullscreen-btn:hover { background: rgba(255,255,255,0.3); }
-
-        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00d2ff; font-size: 24px; z-index: 20; pointer-events: none; transition: opacity 0.5s; }
+        #fullscreen-btn { position: absolute; top: 15px; right: 15px; z-index: 10; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); padding: 8px; border-radius: 50%; cursor: pointer; fill: white; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
         
-        .status { font-size: 12px; color: #e0e0e0; margin-top: 10px; line-height: 1.6; background: rgba(255,255,255,0.1); padding: 8px; border-radius: 4px;}
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00d2ff; font-size: 18px; z-index: 20; pointer-events: none; transition: opacity 0.5s; text-align: center; }
+        
+        .status { font-size: 11px; color: #ccc; margin-top: 10px; line-height: 1.5; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; border-left: 2px solid #00d2ff; }
         .highlight { color: #00d2ff; font-weight: bold; }
+
+        /* lil-gui 样式修正 */
+        .lil-gui { --width: 100%; margin-top: 10px; }
     </style>
     <!-- 引入库 -->
     <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
@@ -48,7 +99,12 @@
 </head>
 <body>
 
-    <div id="loading">正在初始化视觉引擎...</div>
+    <div id="loading">
+        <div>🔮</div>
+        <div>视觉引擎初始化中...</div>
+        <div style="font-size: 12px; color: #666; margin-top: 5px;">请允许摄像头权限</div>
+    </div>
+    
     <video id="video-input" playsinline></video>
     <div id="canvas-container"></div>
 
@@ -57,27 +113,35 @@
     </button>
 
     <div id="ui-container">
-        <div class="control-panel">
-            <h2>深度交互控制器</h2>
-            <div class="btn-group">
-                <button onclick="window.changeShape('sphere')" class="active">球体</button>
-                <button onclick="window.changeShape('heart')">爱心</button>
-                <button onclick="window.changeShape('flower')">花朵</button>
-                <button onclick="window.changeShape('saturn')">土星</button>
+        <div class="control-panel" id="main-panel">
+            <!-- 标题栏：点击可折叠 -->
+            <div class="panel-header" onclick="togglePanel()">
+                <h2>🎮 交互控制</h2>
+                <div class="toggle-icon">▼</div>
             </div>
             
-            <div class="upload-btn-wrapper">
-                <button class="custom-file-btn">📂 上传图片生成粒子</button>
-                <input type="file" id="image-upload" accept="image/*" />
-            </div>
-            
-            <div id="gui-container" style="margin-top: 15px;"></div>
-            
-            <div class="status">
-                <div>🖐️ <b>手势指南:</b></div>
-                <div>1. <span class="highlight">拇指 + 无名指</span> 捏合 -> 缩放大小</div>
-                <div>2. 手掌 <span class="highlight">靠近/远离</span> 摄像头 -> 控制远近</div>
-                <div>3. <span class="highlight">转动手腕</span> -> 旋转模型</div>
+            <!-- 内容区域：会被折叠隐藏 -->
+            <div class="panel-content">
+                <div class="btn-group">
+                    <button onclick="window.changeShape('sphere')" class="active">球体</button>
+                    <button onclick="window.changeShape('heart')">爱心</button>
+                    <button onclick="window.changeShape('flower')">花朵</button>
+                    <button onclick="window.changeShape('saturn')">土星</button>
+                </div>
+                
+                <div class="upload-btn-wrapper">
+                    <button class="custom-file-btn">📂 上传图片</button>
+                    <input type="file" id="image-upload" accept="image/*" />
+                </div>
+                
+                <div id="gui-container"></div>
+                
+                <div class="status">
+                    <div>🖐️ <b>手势指南:</b></div>
+                    <div>• <span class="highlight">拇指+无名指</span> 捏合 -> 缩放</div>
+                    <div>• 手掌 <span class="highlight">靠近/远离</span> -> 远近</div>
+                    <div>• <span class="highlight">转动手腕</span> -> 旋转模型</div>
+                </div>
             </div>
         </div>
     </div>
@@ -87,29 +151,32 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import GUI from 'lil-gui';
 
+        // --- UI 折叠逻辑 ---
+        window.togglePanel = () => {
+            const panel = document.getElementById('main-panel');
+            panel.classList.toggle('collapsed');
+        };
+
         // --- 全局变量 ---
         let scene, camera, renderer, particles, controls;
         let originalPositions = []; 
         let currentPositions = [];  
         const PARTICLE_COUNT = 15000;
         
-        // 交互状态
         let handState = {
             scale: 1.0,      
-            targetZ: 0.0,    // 目标 Z 轴位置 (远近)
+            targetZ: 0.0,
             rotation: { x: 0, y: 0, z: 0 },
             isDetected: false
         };
 
-        // 配置参数
         const params = {
             color1: '#00d2ff',
             color2: '#ff00aa',
             particleSize: 0.08,
-            morphSpeed: 0.1,    // 变形速度
-            moveSpeed: 0.08,    // 远近移动平滑速度
-            rotateSpeed: 0.1,   // 旋转平滑速度
-            baseDepth: 0.0      // 基础深度偏移
+            morphSpeed: 0.1,
+            moveSpeed: 0.08,
+            rotateSpeed: 0.1
         };
 
         // --- 初始化 Three.js ---
@@ -120,7 +187,6 @@
             scene.fog = new THREE.FogExp2(0x050505, 0.02);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            // 相机位置在 Z=8，物体默认在 Z=0
             camera.position.z = 8;
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -130,7 +196,7 @@
 
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.enableRotate = false; // 禁用鼠标旋转，纯手势控制
+            controls.enableRotate = false; // 禁用鼠标旋转
 
             createParticles();
             generateSphere();
@@ -143,7 +209,6 @@
             setTimeout(() => document.getElementById('loading').style.opacity = 0, 1000);
         }
 
-        // --- 粒子系统 ---
         function createParticles() {
             const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(PARTICLE_COUNT * 3);
@@ -307,39 +372,28 @@
             requestAnimationFrame(animate);
             
             const pos = particles.geometry.attributes.position.array;
-            
-            // 1. 形状变形 (Lerp 到目标位置 * 缩放)
             const targetScale = handState.scale > 0.1 ? handState.scale : 0.1;
             
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 const ix = i * 3, iy = i * 3 + 1, iz = i * 3 + 2;
-                
-                // 计算目标坐标
                 let tx = originalPositions[ix] * targetScale;
                 let ty = originalPositions[iy] * targetScale;
                 let tz = originalPositions[iz] * targetScale;
 
-                // 简单的平滑移动
                 pos[ix] += (tx - pos[ix]) * params.morphSpeed;
                 pos[iy] += (ty - pos[iy]) * params.morphSpeed;
                 pos[iz] += (tz - pos[iz]) * params.morphSpeed;
             }
             particles.geometry.attributes.position.needsUpdate = true;
 
-            // 2. 整体位置控制 (远近移动)
-            // 根据手势计算出的 targetZ 平滑移动整个粒子对象
             if (handState.isDetected) {
-                // 平滑插值 Z 轴位置
                 particles.position.z += (handState.targetZ - particles.position.z) * params.moveSpeed;
-                
-                // 旋转跟随
                 particles.rotation.x += (handState.rotation.x - particles.rotation.x) * params.rotateSpeed;
                 particles.rotation.y += (handState.rotation.y - particles.rotation.y) * params.rotateSpeed;
                 particles.rotation.z += (handState.rotation.z - particles.rotation.z) * params.rotateSpeed;
             } else {
-                // 没手时复位到 Z=0
                 particles.position.z += (0 - particles.position.z) * 0.05;
-                particles.rotation.y += 0.002; // 自动旋转
+                particles.rotation.y += 0.002;
             }
             
             controls.update();
@@ -353,7 +407,7 @@
 
             hands.setOptions({
                 maxNumHands: 1,
-                modelComplexity: 1,
+                modelComplexity: 0, // 手机端改用0以提高性能
                 minDetectionConfidence: 0.5,
                 minTrackingConfidence: 0.5
             });
@@ -362,7 +416,9 @@
 
             const cameraUtils = new window.Camera(videoElement, {
                 onFrame: async () => { await hands.send({image: videoElement}); },
-                width: 320, height: 240
+                width: 320, 
+                height: 240,
+                facingMode: 'user' // 强制前置
             });
             cameraUtils.start();
         }
@@ -372,37 +428,24 @@
                 handState.isDetected = true;
                 const lm = results.multiHandLandmarks[0];
                 
-                // 点定义
                 const thumbTip = lm[4];
-                const indexTip = lm[8]; // 旧的
-                const ringTip = lm[16]; // 无名指 Tip (新增)
+                const ringTip = lm[16]; 
                 const wrist = lm[0];
-                const middleMcp = lm[9]; // 中指根部
+                const middleMcp = lm[9]; 
 
-                // --- 1. 缩放逻辑 (拇指 4 与 无名指 16 捏合) ---
+                // 1. 缩放 (拇指+无名指)
                 const pinchDist = Math.hypot(thumbTip.x - ringTip.x, thumbTip.y - ringTip.y);
-                // 距离通常在 0.02 (捏合) 到 0.2 (张开) 之间
-                // 映射到 0.5 ~ 2.5 的缩放倍数
                 let targetScale = (pinchDist - 0.02) * 10; 
                 targetScale = Math.max(0.3, Math.min(targetScale, 3.0));
                 handState.scale += (targetScale - handState.scale) * 0.1;
 
-                // --- 2. 远近逻辑 (基于手掌在画面中的大小) ---
-                // 计算手腕到中指根部的距离作为手掌大小的基准
+                // 2. 远近 (手掌大小)
                 const handSize = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y);
-                
-                // handSize 通常在 0.05 (远) 到 0.3 (近) 之间
-                // 相机在 Z=8。如果不移动，物体在 Z=0。
-                // 我们希望手近时物体近(Z变大)，手远时物体远(Z变小)。
-                // 映射范围：-5 (远) 到 5 (近)
-                // 0.15 是个大概的中间值基准
                 let zPos = (handSize - 0.15) * 30.0;
-                
-                // 限制一下最大最小深度，防止穿模到相机后面
                 zPos = Math.max(-10, Math.min(zPos, 6)); 
                 handState.targetZ = zPos;
 
-                // --- 3. 旋转逻辑 (保持不变) ---
+                // 3. 旋转
                 const indexMcp = lm[5];
                 const pinkyMcp = lm[17];
                 let angleZ = -Math.atan2(pinkyMcp.y - indexMcp.y, pinkyMcp.x - indexMcp.x);
@@ -425,7 +468,6 @@
             gui.addColor(params, 'color1').name('颜色 1').onChange(updateColors);
             gui.addColor(params, 'color2').name('颜色 2').onChange(updateColors);
             gui.add(params, 'particleSize', 0.01, 0.2).name('粒子大小').onChange(v => particles.material.size = v);
-            gui.add(params, 'moveSpeed', 0.01, 0.3).name('移动平滑度');
         }
 
         function onWindowResize() {
