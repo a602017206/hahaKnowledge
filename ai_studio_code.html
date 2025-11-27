@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 深度交互粒子系统</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* 摄像头预览 */
+        #video-input { position: absolute; bottom: 10px; right: 10px; width: 160px; height: 120px; border-radius: 8px; z-index: 2; transform: scaleX(-1); opacity: 0.7; border: 1px solid #444; }
+        
+        /* UI */
+        #ui-container { position: absolute; top: 20px; left: 20px; z-index: 10; pointer-events: none; }
+        .control-panel { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(10px); padding: 15px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); pointer-events: auto; width: 280px; color: white; }
+        
+        h2 { margin: 0 0 15px 0; font-size: 16px; font-weight: 600; letter-spacing: 1px; color: #00d2ff; }
+        .btn-group { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        button { background: #333; border: 1px solid #555; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 12px; }
+        button:hover, button.active { background: #00d2ff; border-color: #00d2ff; color: black; }
+        
+        .upload-btn-wrapper { position: relative; overflow: hidden; display: inline-block; width: 100%; margin-top: 5px; }
+        .upload-btn-wrapper input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
+        .custom-file-btn { width: 100%; background: #444; text-align: center; }
+
+        #fullscreen-btn { position: absolute; top: 20px; right: 20px; z-index: 10; background: rgba(255,255,255,0.1); border: none; padding: 10px; border-radius: 50%; cursor: pointer; fill: white; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; transition: 0.3s; }
+        #fullscreen-btn:hover { background: rgba(255,255,255,0.3); }
+
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00d2ff; font-size: 24px; z-index: 20; pointer-events: none; transition: opacity 0.5s; }
+        
+        .status { font-size: 12px; color: #e0e0e0; margin-top: 10px; line-height: 1.6; background: rgba(255,255,255,0.1); padding: 8px; border-radius: 4px;}
+        .highlight { color: #00d2ff; font-weight: bold; }
+    </style>
+    <!-- 引入库 -->
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/",
+                "lil-gui": "https://unpkg.com/lil-gui@0.18.0/dist/lil-gui.esm.min.js"
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loading">正在初始化视觉引擎...</div>
+    <video id="video-input" playsinline></video>
+    <div id="canvas-container"></div>
+
+    <button id="fullscreen-btn" title="全屏">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="white"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+    </button>
+
+    <div id="ui-container">
+        <div class="control-panel">
+            <h2>深度交互控制器</h2>
+            <div class="btn-group">
+                <button onclick="window.changeShape('sphere')" class="active">球体</button>
+                <button onclick="window.changeShape('heart')">爱心</button>
+                <button onclick="window.changeShape('flower')">花朵</button>
+                <button onclick="window.changeShape('saturn')">土星</button>
+            </div>
+            
+            <div class="upload-btn-wrapper">
+                <button class="custom-file-btn">📂 上传图片生成粒子</button>
+                <input type="file" id="image-upload" accept="image/*" />
+            </div>
+            
+            <div id="gui-container" style="margin-top: 15px;"></div>
+            
+            <div class="status">
+                <div>🖐️ <b>手势指南:</b></div>
+                <div>1. <span class="highlight">拇指 + 无名指</span> 捏合 -> 缩放大小</div>
+                <div>2. 手掌 <span class="highlight">靠近/远离</span> 摄像头 -> 控制远近</div>
+                <div>3. <span class="highlight">转动手腕</span> -> 旋转模型</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import GUI from 'lil-gui';
+
+        // --- 全局变量 ---
+        let scene, camera, renderer, particles, controls;
+        let originalPositions = []; 
+        let currentPositions = [];  
+        const PARTICLE_COUNT = 15000;
+        
+        // 交互状态
+        let handState = {
+            scale: 1.0,      
+            targetZ: 0.0,    // 目标 Z 轴位置 (远近)
+            rotation: { x: 0, y: 0, z: 0 },
+            isDetected: false
+        };
+
+        // 配置参数
+        const params = {
+            color1: '#00d2ff',
+            color2: '#ff00aa',
+            particleSize: 0.08,
+            morphSpeed: 0.1,    // 变形速度
+            moveSpeed: 0.08,    // 远近移动平滑速度
+            rotateSpeed: 0.1,   // 旋转平滑速度
+            baseDepth: 0.0      // 基础深度偏移
+        };
+
+        // --- 初始化 Three.js ---
+        function init() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050505, 0.02);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            // 相机位置在 Z=8，物体默认在 Z=0
+            camera.position.z = 8;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.enableRotate = false; // 禁用鼠标旋转，纯手势控制
+
+            createParticles();
+            generateSphere();
+            updateColors();
+
+            initGUI();
+            window.addEventListener('resize', onWindowResize);
+            animate();
+            
+            setTimeout(() => document.getElementById('loading').style.opacity = 0, 1000);
+        }
+
+        // --- 粒子系统 ---
+        function createParticles() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(PARTICLE_COUNT * 3);
+            const colors = new Float32Array(PARTICLE_COUNT * 3);
+
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                positions[i] = (Math.random() - 0.5) * 20;
+                colors[i] = 1.0;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: params.particleSize,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.8,
+                map: createCircleTexture()
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+            currentPositions = positions; 
+            originalPositions = new Float32Array(PARTICLE_COUNT * 3);
+        }
+
+        function createCircleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32;
+            canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 14);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // --- 形状生成 ---
+        function generateSphere() {
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT);
+                const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi;
+                const r = 3;
+                originalPositions[i*3] = r * Math.cos(theta) * Math.sin(phi);
+                originalPositions[i*3+1] = r * Math.sin(theta) * Math.sin(phi);
+                originalPositions[i*3+2] = r * Math.cos(phi);
+            }
+            updateColors();
+        }
+
+        function generateHeart() {
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const t = Math.random() * Math.PI * 2;
+                const x = 16 * Math.pow(Math.sin(t), 3);
+                const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+                const z = (Math.random() - 0.5) * 4;
+                const s = 0.15;
+                originalPositions[i*3] = x * s;
+                originalPositions[i*3+1] = y * s;
+                originalPositions[i*3+2] = z;
+            }
+            updateColors();
+        }
+
+        function generateFlower() {
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const r_base = Math.cos(4 * theta);
+                const r = (r_base + 1.5) * (Math.random() * 0.5 + 0.5);
+                originalPositions[i*3] = r * Math.cos(theta) * 2;
+                originalPositions[i*3+1] = r * Math.sin(theta) * 2;
+                originalPositions[i*3+2] = Math.sin(r * 5) * 0.5 + (Math.random()-0.5);
+            }
+            updateColors();
+        }
+
+        function generateSaturn() {
+            const ringCount = Math.floor(PARTICLE_COUNT * 0.4);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                let x, y, z;
+                if(i < ringCount) { 
+                    const ang = Math.random() * Math.PI * 2;
+                    const r = 3.0 + Math.random() * 2.0;
+                    x = r * Math.cos(ang);
+                    y = (Math.random() - 0.5) * 0.2;
+                    z = r * Math.sin(ang);
+                } else { 
+                    const phi = Math.acos(-1 + (2 * (i-ringCount)) / (PARTICLE_COUNT-ringCount));
+                    const theta = Math.sqrt((PARTICLE_COUNT-ringCount) * Math.PI) * phi;
+                    const r = 2.0;
+                    x = r * Math.cos(theta) * Math.sin(phi);
+                    y = r * Math.sin(theta) * Math.sin(phi);
+                    z = r * Math.cos(phi);
+                }
+                originalPositions[i*3] = x;
+                originalPositions[i*3+1] = y;
+                originalPositions[i*3+2] = z;
+            }
+            updateColors();
+        }
+
+        function processImage(imgElement) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const size = 200; 
+            canvas.width = size;
+            canvas.height = size * (imgElement.height / imgElement.width);
+            ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
+            const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            const validPixels = [];
+            
+            for(let y = 0; y < canvas.height; y+=2) {
+                for(let x = 0; x < canvas.width; x+=2) {
+                    const i = (y * canvas.width + x) * 4;
+                    if(data[i+3] > 128 && (data[i]+data[i+1]+data[i+2])/3 > 30) {
+                        validPixels.push({
+                            x: (x / canvas.width - 0.5) * 6,
+                            y: -(y / canvas.height - 0.5) * 6 * (canvas.height/canvas.width)
+                        });
+                    }
+                }
+            }
+            if(validPixels.length === 0) return;
+            for(let i = 0; i < PARTICLE_COUNT; i++) {
+                const p = validPixels[i % validPixels.length];
+                originalPositions[i*3] = p.x;
+                originalPositions[i*3+1] = p.y;
+                originalPositions[i*3+2] = (Math.random() - 0.5) * 0.5;
+            }
+            updateColors();
+        }
+
+        function updateColors() {
+            const c1 = new THREE.Color(params.color1);
+            const c2 = new THREE.Color(params.color2);
+            let minY = Infinity, maxY = -Infinity;
+            for(let i = 1; i < PARTICLE_COUNT * 3; i += 3) {
+                if(originalPositions[i] < minY) minY = originalPositions[i];
+                if(originalPositions[i] > maxY) maxY = originalPositions[i];
+            }
+            const range = maxY - minY || 1;
+            const colors = particles.geometry.attributes.color.array;
+            const tmp = new THREE.Color();
+            for(let i = 0; i < PARTICLE_COUNT; i++) {
+                const t = (originalPositions[i*3+1] - minY) / range;
+                tmp.copy(c1).lerp(c2, t);
+                colors[i*3] = tmp.r;
+                colors[i*3+1] = tmp.g;
+                colors[i*3+2] = tmp.b;
+            }
+            particles.geometry.attributes.color.needsUpdate = true;
+        }
+
+        // --- 核心动画循环 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const pos = particles.geometry.attributes.position.array;
+            
+            // 1. 形状变形 (Lerp 到目标位置 * 缩放)
+            const targetScale = handState.scale > 0.1 ? handState.scale : 0.1;
+            
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const ix = i * 3, iy = i * 3 + 1, iz = i * 3 + 2;
+                
+                // 计算目标坐标
+                let tx = originalPositions[ix] * targetScale;
+                let ty = originalPositions[iy] * targetScale;
+                let tz = originalPositions[iz] * targetScale;
+
+                // 简单的平滑移动
+                pos[ix] += (tx - pos[ix]) * params.morphSpeed;
+                pos[iy] += (ty - pos[iy]) * params.morphSpeed;
+                pos[iz] += (tz - pos[iz]) * params.morphSpeed;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+
+            // 2. 整体位置控制 (远近移动)
+            // 根据手势计算出的 targetZ 平滑移动整个粒子对象
+            if (handState.isDetected) {
+                // 平滑插值 Z 轴位置
+                particles.position.z += (handState.targetZ - particles.position.z) * params.moveSpeed;
+                
+                // 旋转跟随
+                particles.rotation.x += (handState.rotation.x - particles.rotation.x) * params.rotateSpeed;
+                particles.rotation.y += (handState.rotation.y - particles.rotation.y) * params.rotateSpeed;
+                particles.rotation.z += (handState.rotation.z - particles.rotation.z) * params.rotateSpeed;
+            } else {
+                // 没手时复位到 Z=0
+                particles.position.z += (0 - particles.position.z) * 0.05;
+                particles.rotation.y += 0.002; // 自动旋转
+            }
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- MediaPipe 视觉逻辑 ---
+        function setupMediaPipe() {
+            const videoElement = document.getElementById('video-input');
+            const hands = new window.Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onHandsResults);
+
+            const cameraUtils = new window.Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 320, height: 240
+            });
+            cameraUtils.start();
+        }
+
+        function onHandsResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                handState.isDetected = true;
+                const lm = results.multiHandLandmarks[0];
+                
+                // 点定义
+                const thumbTip = lm[4];
+                const indexTip = lm[8]; // 旧的
+                const ringTip = lm[16]; // 无名指 Tip (新增)
+                const wrist = lm[0];
+                const middleMcp = lm[9]; // 中指根部
+
+                // --- 1. 缩放逻辑 (拇指 4 与 无名指 16 捏合) ---
+                const pinchDist = Math.hypot(thumbTip.x - ringTip.x, thumbTip.y - ringTip.y);
+                // 距离通常在 0.02 (捏合) 到 0.2 (张开) 之间
+                // 映射到 0.5 ~ 2.5 的缩放倍数
+                let targetScale = (pinchDist - 0.02) * 10; 
+                targetScale = Math.max(0.3, Math.min(targetScale, 3.0));
+                handState.scale += (targetScale - handState.scale) * 0.1;
+
+                // --- 2. 远近逻辑 (基于手掌在画面中的大小) ---
+                // 计算手腕到中指根部的距离作为手掌大小的基准
+                const handSize = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y);
+                
+                // handSize 通常在 0.05 (远) 到 0.3 (近) 之间
+                // 相机在 Z=8。如果不移动，物体在 Z=0。
+                // 我们希望手近时物体近(Z变大)，手远时物体远(Z变小)。
+                // 映射范围：-5 (远) 到 5 (近)
+                // 0.15 是个大概的中间值基准
+                let zPos = (handSize - 0.15) * 30.0;
+                
+                // 限制一下最大最小深度，防止穿模到相机后面
+                zPos = Math.max(-10, Math.min(zPos, 6)); 
+                handState.targetZ = zPos;
+
+                // --- 3. 旋转逻辑 (保持不变) ---
+                const indexMcp = lm[5];
+                const pinkyMcp = lm[17];
+                let angleZ = -Math.atan2(pinkyMcp.y - indexMcp.y, pinkyMcp.x - indexMcp.x);
+                let angleX = (middleMcp.y - wrist.y) * 4.0; 
+                let angleY = (indexMcp.z - pinkyMcp.z) * 8.0;
+
+                handState.rotation.z = angleZ; 
+                handState.rotation.x = angleX + 0.5; 
+                handState.rotation.y = angleY;
+
+            } else {
+                handState.isDetected = false;
+                handState.scale += (1.0 - handState.scale) * 0.05;
+            }
+        }
+
+        // --- UI 设置 ---
+        function initGUI() {
+            const gui = new GUI({ container: document.getElementById('gui-container'), width: '100%' });
+            gui.addColor(params, 'color1').name('颜色 1').onChange(updateColors);
+            gui.addColor(params, 'color2').name('颜色 2').onChange(updateColors);
+            gui.add(params, 'particleSize', 0.01, 0.2).name('粒子大小').onChange(v => particles.material.size = v);
+            gui.add(params, 'moveSpeed', 0.01, 0.3).name('移动平滑度');
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        window.changeShape = (type) => {
+            document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            switch(type) {
+                case 'sphere': generateSphere(); break;
+                case 'heart': generateHeart(); break;
+                case 'flower': generateFlower(); break;
+                case 'saturn': generateSaturn(); break;
+            }
+        };
+
+        document.getElementById('image-upload').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => { processImage(img); };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        document.getElementById('fullscreen-btn').addEventListener('click', () => {
+            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+            else if (document.exitFullscreen) document.exitFullscreen();
+        });
+
+        init();
+        setupMediaPipe();
+
+    </script>
+</body>
+</html>
